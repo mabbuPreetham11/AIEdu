@@ -98,6 +98,29 @@ export const AssignmentsPage = () => {
     void loadData();
   }, [selectedClassroomId]);
 
+  useEffect(() => {
+    if (!isStudent || !selectedClassroomId) return;
+    const refresh = async () => {
+      try {
+        const classroomQuizzes = await quizService.listClassroomQuizzes(selectedClassroomId);
+        setQuizzes(classroomQuizzes);
+      } catch {
+        // keep existing data; avoid interrupting user flow with noisy background errors
+      }
+    };
+    const intervalId = window.setInterval(() => {
+      void refresh();
+    }, 10000);
+    const onFocus = () => {
+      void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [isStudent, selectedClassroomId]);
+
   const classroomMaterials = useMemo(() => {
     if (!selectedClassroomId) return [];
     return materialsByClassroom[selectedClassroomId] ?? [];
@@ -505,6 +528,12 @@ export const AssignmentsPage = () => {
               </option>
             ))}
           </select>
+          {selectedClassroomId ? (
+            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+              Viewing classroom:{" "}
+              {studentClassrooms.find((item) => item.id === selectedClassroomId)?.name ?? "Selected classroom"}
+            </p>
+          ) : null}
 
           {!activeQuiz ? (
             <div className="space-y-3">

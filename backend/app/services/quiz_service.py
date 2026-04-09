@@ -125,8 +125,7 @@ class QuizService:
         if not quiz:
             raise LMSException(status_code=404, detail="Quiz not found")
 
-        now_utc = datetime.now(timezone.utc)
-        if quiz.deadline and quiz.deadline < now_utc:
+        if quiz.deadline and self._is_deadline_passed(quiz.deadline):
             raise LMSException(status_code=400, detail="Quiz deadline has passed")
 
         existing = await self.db.scalar(
@@ -231,6 +230,11 @@ class QuizService:
             elif right in false_values:
                 right = "false"
         return left == right
+
+    def _is_deadline_passed(self, deadline: datetime) -> bool:
+        if deadline.tzinfo is None or deadline.tzinfo.utcoffset(deadline) is None:
+            return deadline < datetime.utcnow()
+        return deadline < datetime.now(timezone.utc)
 
     async def _material_text(self, material: Material) -> str:
         if material.type in {MaterialType.pdf, MaterialType.slide} and material.file_path:

@@ -19,6 +19,7 @@ class Quiz(Base, TimestampMixin):
 
     classroom = relationship("Classroom", back_populates="quizzes")
     questions = relationship("ClassroomQuizQuestion", back_populates="quiz", cascade="all, delete-orphan")
+    attempts = relationship("QuizAttempt", back_populates="quiz", cascade="all, delete-orphan")
 
 
 class ClassroomQuizQuestion(Base):
@@ -34,3 +35,17 @@ class ClassroomQuizQuestion(Base):
     order_number: Mapped[int] = mapped_column(Integer, nullable=False)
 
     quiz = relationship("Quiz", back_populates="questions")
+
+
+class QuizAttempt(Base):
+    __tablename__ = "classroom_quiz_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quiz_id: Mapped[int] = mapped_column(ForeignKey("classroom_quizzes.id"), nullable=False, index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    score: Mapped[float] = mapped_column(nullable=False)
+    answers: Mapped[dict] = mapped_column(JSONType, nullable=False)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    quiz = relationship("Quiz", back_populates="attempts")
+    student = relationship("User", back_populates="quiz_attempts")

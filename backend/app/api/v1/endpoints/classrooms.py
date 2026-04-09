@@ -17,7 +17,19 @@ from app.models.user import User, UserRole
 from app.schemas.chat import ChatMessageRead, CitationRead, ClassroomQuestionRequest
 from app.schemas.classroom import ClassroomCreate, JoinClassroomRequest, StudentClassroomRead, TeacherClassroomRead
 from app.schemas.material import MaterialRead
-from app.schemas.quiz import QuizGenerateRequest, QuizGenerateResponse, QuizPublishRequest, QuizRead
+from app.schemas.quiz import (
+    QuizAnalyticsItem,
+    QuizAnalyticsResponse,
+    QuizAttemptQuestionResult,
+    QuizAttemptRead,
+    QuizAttemptSubmitRequest,
+    QuizAttemptSubmitResponse,
+    QuizGenerateRequest,
+    QuizGenerateResponse,
+    QuizPublishRequest,
+    QuizRead,
+    QuizWithAttemptRead,
+)
 from app.services.chat_service import ChatService
 from app.services.classroom_service import ClassroomService, classroom_qr_code_data_url
 from app.services.material_service import MaterialService
@@ -35,6 +47,26 @@ def _chat_message_read(message: ChatMessage) -> ChatMessageRead:
         created_at=message.created_at,
         updated_at=message.updated_at,
         citations=[CitationRead(doc_name=item.doc_name, page_number=item.page_number) for item in message.citations],
+    )
+
+
+def _quiz_with_attempt_read(quiz: Quiz, user: User) -> QuizWithAttemptRead:
+    my_attempt = None
+    if user.role == UserRole.student:
+        match = next((item for item in quiz.attempts if item.student_id == user.id), None)
+        if match:
+            my_attempt = QuizAttemptRead.model_validate(match)
+    return QuizWithAttemptRead(
+        id=quiz.id,
+        classroom_id=quiz.classroom_id,
+        title=quiz.title,
+        deadline=quiz.deadline,
+        is_published=quiz.is_published,
+        randomise_order=quiz.randomise_order,
+        questions=sorted(quiz.questions, key=lambda item: item.order_number),
+        created_at=quiz.created_at,
+        updated_at=quiz.updated_at,
+        my_attempt=my_attempt,
     )
 
 
@@ -231,10 +263,84 @@ async def publish_classroom_quiz(
     return await QuizService(db).publish_quiz(classroom_id=classroom_id, teacher=teacher, payload=payload)
 
 
-@router.get("/{classroom_id}/quizzes", response_model=list[QuizRead])
+@router.get("/{classroom_id}/quizzes", response_model=list[QuizWithAttemptRead])
 async def list_classroom_quizzes(
     classroom_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Quiz]:
-    return await QuizService(db).list_quizzes(classroom_id=classroom_id, user=user)
+) -> list[QuizWithAttemptRead]:
+    quizzes = await QuizService(db).list_quizzes(classroom_id=classroom_id, user=user)
+    return [_quiz_with_attempt_read(item, user) for item in quizzes]
+
+
+@router.post("/{classroom_id}/quizzes/{quiz_id}/attempt", response_model=QuizAttemptSubmitResponse)
+async def submit_quiz_attempt(
+    classroom_id: int,
+    quiz_id: int,
+    payload: QuizAttemptSubmitRequest,
+    db: AsyncSession = Depends(get_db),
+    student: User = Depends(require_role(UserRole.student)),
+) -> QuizAttemptSubmitResponse:
+    service = QuizService(db)
+    attempt = await service.submit_attempt(classroom_id=classroom_id, quiz_id=quiz_id, student=student, answers=payload.answers)
+    quiz = await service.get_quiz(classroom_id=classroom_id, quiz_id=quiz_id, user=student)
+
+    results: list[QuizAttemptQuestionResult] = []
+    correct_count = 0
+    for question in sorted(quiz.questions, key=lambda item: item.order_number):
+        selected = str(attempt.answers.get(str(question.id), "")).strip()
+        is_correct = selected.strip().lower() == question.correct_answer.strip().lower()
+        if question.type == "true_false":
+            yes_vals = {"true", "t", "1", "yes"}
+            no_vals = {"false", "f", "0", "no"}
+            left = "true" if selected.lower() in yes_vals else "false" if selected.lower() in no_vals else selected.lower()
+            right = "true" if question.correct_answer.lower() in yes_vals else "false" if question.correct_answer.lower() in no_vals else question.correct_answer.lower()
+            is_correct = left == right
+        if is_correct:
+            correct_count += 1
+        results.append(
+            QuizAttemptQuestionResult(
+                question_id=question.id,
+                question=question.question,
+                selected_answer=selected,
+                correct_answer=question.correct_answer,
+                is_correct=is_correct,
+                explanation=question.explanation,
+            )
+        )
+
+    return QuizAttemptSubmitResponse(
+        attempt_id=attempt.id,
+        quiz_id=quiz.id,
+        score=attempt.score,
+        total_questions=len(quiz.questions),
+        correct_count=correct_count,
+        submitted_at=attempt.submitted_at,
+        results=results,
+    )
+
+
+@router.get("/{classroom_id}/quizzes/{quiz_id}/analytics", response_model=QuizAnalyticsResponse)
+async def get_quiz_analytics(
+    classroom_id: int,
+    quiz_id: int,
+    db: AsyncSession = Depends(get_db),
+    teacher: User = Depends(require_role(UserRole.teacher)),
+) -> QuizAnalyticsResponse:
+    quiz, attempts = await QuizService(db).get_quiz_analytics(classroom_id=classroom_id, quiz_id=quiz_id, teacher=teacher)
+    items = [
+        QuizAnalyticsItem(
+            student_id=item.student_id,
+            student_name=f"{item.student.first_name} {item.student.last_name}".strip(),
+            student_email=item.student.email,
+            score=item.score,
+            submitted_at=item.submitted_at,
+        )
+        for item in attempts
+    ]
+    return QuizAnalyticsResponse(
+        quiz_id=quiz.id,
+        title=quiz.title,
+        deadline=quiz.deadline,
+        attempts=items,
+    )

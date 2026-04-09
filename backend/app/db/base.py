@@ -4,7 +4,7 @@ from app.models.classroom import Classroom, ClassroomMember
 from app.models.course import Announcement, ClassSession, Course, CourseEnrollment, SessionNote
 from app.models.grade import Grade
 from app.models.material import Material
-from app.models.quiz import ClassroomQuizQuestion, Quiz
+from app.models.quiz import ClassroomQuizQuestion, Quiz, QuizAttempt
 from app.models.user import User
 
 __all__ = [
@@ -21,6 +21,7 @@ __all__ = [
     "Grade",
     "Material",
     "Quiz",
+    "QuizAttempt",
     "AssignmentQuizQuestion",
     "ClassroomQuizQuestion",
     "SessionNote",

@@ -81,6 +81,71 @@ export interface Quiz {
   updated_at: string;
 }
 
+export interface QuizAttempt {
+  id: number;
+  quiz_id: number;
+  student_id: number;
+  score: number;
+  answers: Record<string, string>;
+  submitted_at: string;
+}
+
+export interface QuizQuestionPublicItem {
+  id: number;
+  quiz_id: number;
+  question: string;
+  type: QuizQuestionType;
+  options?: string[] | null;
+  order_number: number;
+}
+
+export interface QuizWithAttempt {
+  id: number;
+  classroom_id: number;
+  title: string;
+  deadline: string;
+  is_published: boolean;
+  randomise_order: boolean;
+  questions: QuizQuestionPublicItem[];
+  created_at: string;
+  updated_at: string;
+  my_attempt?: QuizAttempt | null;
+}
+
+export interface QuizAttemptQuestionResult {
+  question_id: number;
+  question: string;
+  selected_answer: string;
+  correct_answer: string;
+  is_correct: boolean;
+  explanation: string;
+}
+
+export interface QuizAttemptSubmitResponse {
+  attempt_id: number;
+  quiz_id: number;
+  score: number;
+  total_questions: number;
+  correct_count: number;
+  submitted_at: string;
+  results: QuizAttemptQuestionResult[];
+}
+
+export interface QuizAnalyticsItem {
+  student_id: number;
+  student_name: string;
+  student_email: string;
+  score: number;
+  submitted_at: string;
+}
+
+export interface QuizAnalyticsResponse {
+  quiz_id: number;
+  title: string;
+  deadline: string;
+  attempts: QuizAnalyticsItem[];
+}
+
 export interface Assignment {
   id: number;
   course_id: number;

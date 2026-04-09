@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -13,9 +14,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.exceptions import LMSException
-from app.models.classroom import Classroom
+from app.models.classroom import Classroom, ClassroomMember
 from app.models.material import Material, MaterialType
-from app.models.quiz import ClassroomQuizQuestion, Quiz
+from app.models.quiz import ClassroomQuizQuestion, Quiz, QuizAttempt
 from app.models.user import User, UserRole
 from app.services.groq_rate_limit import acquire_groq_slot
 from app.schemas.quiz import GeneratedQuizQuestion, QuizPublishRequest
@@ -98,14 +99,100 @@ class QuizService:
             await self._teacher_classroom_or_403(classroom_id, user)
             where_clause = Quiz.classroom_id == classroom_id
         elif user.role == UserRole.student:
+            await self._student_classroom_or_403(classroom_id, user)
             where_clause = (Quiz.classroom_id == classroom_id) & (Quiz.is_published.is_(True))
         else:
             raise LMSException(status_code=403, detail="Not allowed")
 
         result = await self.db.scalars(
-            select(Quiz).options(selectinload(Quiz.questions)).where(where_clause).order_by(Quiz.created_at.desc())
+            select(Quiz)
+            .options(selectinload(Quiz.questions), selectinload(Quiz.attempts))
+            .where(where_clause)
+            .order_by(Quiz.created_at.desc())
         )
         return list(result.all())
+
+    async def submit_attempt(self, classroom_id: int, quiz_id: int, student: User, answers: dict[str, str]) -> QuizAttempt:
+        if student.role != UserRole.student:
+            raise LMSException(status_code=403, detail="Only students can submit quiz attempts")
+        await self._student_classroom_or_403(classroom_id, student)
+
+        quiz = await self.db.scalar(
+            select(Quiz)
+            .options(selectinload(Quiz.questions))
+            .where(Quiz.id == quiz_id, Quiz.classroom_id == classroom_id, Quiz.is_published.is_(True))
+        )
+        if not quiz:
+            raise LMSException(status_code=404, detail="Quiz not found")
+
+        now_utc = datetime.now(timezone.utc)
+        if quiz.deadline and quiz.deadline < now_utc:
+            raise LMSException(status_code=400, detail="Quiz deadline has passed")
+
+        existing = await self.db.scalar(
+            select(QuizAttempt).where(QuizAttempt.quiz_id == quiz_id, QuizAttempt.student_id == student.id)
+        )
+        if existing:
+            raise LMSException(status_code=400, detail="Quiz already submitted")
+
+        total = len(quiz.questions)
+        if total == 0:
+            raise LMSException(status_code=400, detail="Quiz has no questions")
+
+        normalized_answers: dict[str, str] = {}
+        correct_count = 0
+        for question in quiz.questions:
+            selected = str(answers.get(str(question.id), "")).strip()
+            normalized_answers[str(question.id)] = selected
+            if self._answers_match(selected, question.correct_answer, question.type):
+                correct_count += 1
+
+        score = round((correct_count / total) * 100, 2)
+        attempt = QuizAttempt(
+            quiz_id=quiz_id,
+            student_id=student.id,
+            score=score,
+            answers=normalized_answers,
+        )
+        self.db.add(attempt)
+        await self.db.commit()
+        await self.db.refresh(attempt)
+        return attempt
+
+    async def get_quiz(self, classroom_id: int, quiz_id: int, user: User) -> Quiz:
+        if user.role == UserRole.teacher:
+            await self._teacher_classroom_or_403(classroom_id, user)
+        elif user.role == UserRole.student:
+            await self._student_classroom_or_403(classroom_id, user)
+        else:
+            raise LMSException(status_code=403, detail="Not allowed")
+
+        quiz = await self.db.scalar(
+            select(Quiz)
+            .options(selectinload(Quiz.questions), selectinload(Quiz.attempts))
+            .where(Quiz.id == quiz_id, Quiz.classroom_id == classroom_id)
+        )
+        if not quiz:
+            raise LMSException(status_code=404, detail="Quiz not found")
+        if user.role == UserRole.student and not quiz.is_published:
+            raise LMSException(status_code=404, detail="Quiz not found")
+        return quiz
+
+    async def get_quiz_analytics(self, classroom_id: int, quiz_id: int, teacher: User) -> tuple[Quiz, list[QuizAttempt]]:
+        await self._teacher_classroom_or_403(classroom_id, teacher)
+        quiz = await self.db.scalar(
+            select(Quiz).where(Quiz.id == quiz_id, Quiz.classroom_id == classroom_id)
+        )
+        if not quiz:
+            raise LMSException(status_code=404, detail="Quiz not found")
+
+        attempts = await self.db.scalars(
+            select(QuizAttempt)
+            .options(selectinload(QuizAttempt.student))
+            .where(QuizAttempt.quiz_id == quiz_id)
+            .order_by(QuizAttempt.submitted_at.desc())
+        )
+        return quiz, list(attempts.all())
 
     async def _teacher_classroom_or_403(self, classroom_id: int, teacher: User) -> Classroom:
         if teacher.role != UserRole.teacher:
@@ -116,6 +203,34 @@ class QuizService:
         if classroom.teacher_id != teacher.id:
             raise LMSException(status_code=403, detail="Only classroom teacher can manage quizzes")
         return classroom
+
+    async def _student_classroom_or_403(self, classroom_id: int, student: User) -> None:
+        if student.role != UserRole.student:
+            raise LMSException(status_code=403, detail="Only students can access this")
+        membership = await self.db.scalar(
+            select(ClassroomMember).where(
+                ClassroomMember.classroom_id == classroom_id,
+                ClassroomMember.student_id == student.id,
+            )
+        )
+        if not membership:
+            raise LMSException(status_code=403, detail="Student is not in this classroom")
+
+    def _answers_match(self, selected: str, correct: str, question_type: str) -> bool:
+        left = selected.strip().lower()
+        right = correct.strip().lower()
+        if question_type == "true_false":
+            true_values = {"true", "t", "1", "yes"}
+            false_values = {"false", "f", "0", "no"}
+            if left in true_values:
+                left = "true"
+            elif left in false_values:
+                left = "false"
+            if right in true_values:
+                right = "true"
+            elif right in false_values:
+                right = "false"
+        return left == right
 
     async def _material_text(self, material: Material) -> str:
         if material.type in {MaterialType.pdf, MaterialType.slide} and material.file_path:

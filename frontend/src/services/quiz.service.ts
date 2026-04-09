@@ -1,5 +1,5 @@
 import { api } from "./api";
-import type { Quiz, QuizQuestionType } from "../types";
+import type { Quiz, QuizAnalyticsResponse, QuizAttemptSubmitResponse, QuizQuestionType, QuizWithAttempt } from "../types";
 
 export interface GeneratedQuizQuestion {
   question: string;
@@ -28,7 +28,15 @@ export const quizService = {
     return data;
   },
   async listClassroomQuizzes(classroomId: number) {
-    const { data } = await api.get<Quiz[]>(`/classrooms/${classroomId}/quizzes`);
+    const { data } = await api.get<QuizWithAttempt[]>(`/classrooms/${classroomId}/quizzes`);
+    return data;
+  },
+  async submitAttempt(classroomId: number, quizId: number, payload: { answers: Record<string, string> }) {
+    const { data } = await api.post<QuizAttemptSubmitResponse>(`/classrooms/${classroomId}/quizzes/${quizId}/attempt`, payload);
+    return data;
+  },
+  async getQuizAnalytics(classroomId: number, quizId: number) {
+    const { data } = await api.get<QuizAnalyticsResponse>(`/classrooms/${classroomId}/quizzes/${quizId}/analytics`);
     return data;
   },
 };

@@ -27,3 +27,4 @@ class User(Base, TimestampMixin):
     taught_courses = relationship("Course", back_populates="teacher")
     classrooms_created = relationship("Classroom", back_populates="teacher")
     joined_classrooms = relationship("ClassroomMember", back_populates="student")
+    quiz_attempts = relationship("QuizAttempt", back_populates="student", cascade="all, delete-orphan")

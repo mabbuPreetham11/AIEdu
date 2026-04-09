@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from collections import Counter
@@ -140,13 +141,13 @@ class RAGService:
 
         self._index_fallback(classroom_id=classroom_id, material_id=material_id, doc_name=doc_name, chunks=chunks)
 
-    def retrieve(self, *, classroom_id: int, question: str, k: int = 5) -> list[RetrievedChunk]:
+    def retrieve(self, *, classroom_id: int, question: str, k: int = 8) -> list[RetrievedChunk]:
         collection = self._get_collection()
         if collection is not None:
             question_embedding = self._embed([question])[0]
             result = collection.query(
                 query_embeddings=[question_embedding],
-                n_results=k,
+                n_results=max(k * 2, 10),
                 where={"classroom_id": classroom_id},
             )
 
@@ -166,7 +167,12 @@ class RAGService:
                         score=similarity,
                     )
                 )
-            return retrieved
+            query_vec = self._text_vector(question)
+            for item in retrieved:
+                lexical = self._cosine_similarity(query_vec, self._text_vector(item.text))
+                item.score = (0.7 * item.score) + (0.3 * lexical)
+            retrieved.sort(key=lambda item: item.score, reverse=True)
+            return retrieved[:k]
 
         return self._retrieve_fallback(classroom_id=classroom_id, question=question, k=k)
 
@@ -186,7 +192,23 @@ class RAGService:
                 for i, chunk in enumerate(chunks)
             ]
         )
-        system_prompt = "Answer only from the provided course material. Do not answer from general knowledge."
+        intent = self._detect_question_intent(question)
+        answer_style = (
+            "Use this structure:\n"
+            "1) Core idea in simple words (2-4 lines)\n"
+            "2) Step-by-step explanation (3-6 bullets)\n"
+            "3) Short example or intuition from the provided material\n"
+            "4) One-line takeaway"
+            if intent == "explain"
+            else "Answer concisely and directly using only relevant points from the provided material."
+        )
+        system_prompt = (
+            "You are a classroom assistant. Answer only from the provided course material context. "
+            "Do not use general knowledge. If the context does not contain the answer, explicitly say that "
+            "the material does not contain enough information.\n\n"
+            "When useful, explain concepts in student-friendly language without inventing facts.\n\n"
+            f"{answer_style}"
+        )
         user_prompt = (
             f"Course material context:\n{context}\n\n"
             f"Question: {question}\n\n"
@@ -219,6 +241,37 @@ class RAGService:
         if not isinstance(content, str) or not content.strip():
             raise LMSException(status_code=500, detail=f"Unexpected Groq response: {json.dumps(data)}")
         return content.strip()
+
+    def _detect_question_intent(self, question: str) -> str:
+        q = question.lower().strip()
+        explain_markers = {
+            "explain",
+            "understand",
+            "intuition",
+            "why",
+            "how",
+            "teach",
+            "elaborate",
+            "break down",
+            "simplify",
+            "example",
+        }
+        direct_markers = {
+            "define",
+            "what is",
+            "list",
+            "when",
+            "who",
+            "formula",
+            "value",
+            "state",
+            "name",
+        }
+        if any(marker in q for marker in explain_markers):
+            return "explain"
+        if any(marker in q for marker in direct_markers):
+            return "direct"
+        return "direct"
 
     def answer_locally(self, *, question: str, chunks: list[RetrievedChunk]) -> str:
         if not chunks:
@@ -278,8 +331,9 @@ class RAGService:
         if not self._fallback_path.exists():
             return []
 
-        question_vector = self._text_vector(question)
-        if not question_vector:
+        variants = self._query_variants(question)
+        variant_vectors = [self._text_vector(item) for item in variants]
+        if not any(variant_vectors):
             return []
 
         rows = []
@@ -293,7 +347,10 @@ class RAGService:
             if int(row.get("classroom_id", -1)) != classroom_id:
                 continue
             text = str(row.get("text", ""))
-            score = self._cosine_similarity(question_vector, self._text_vector(text))
+            text_vector = self._text_vector(text)
+            score = max(self._cosine_similarity(vector, text_vector) for vector in variant_vectors if vector)
+            if score == 0.0 and self._contains_any_variant(text, variants):
+                score = 0.15
             rows.append(
                 RetrievedChunk(
                     text=text,
@@ -306,8 +363,32 @@ class RAGService:
         rows.sort(key=lambda item: item.score, reverse=True)
         return rows[:k]
 
+    def _query_variants(self, question: str) -> list[str]:
+        base = question.strip()
+        if not base:
+            return [base]
+        variants = {base}
+        variants.add(base.replace("-", " "))
+        variants.add(base.replace("-", ""))
+        return [item for item in variants if item.strip()]
+
+    def _contains_any_variant(self, text: str, variants: list[str]) -> bool:
+        haystack = text.lower()
+        for variant in variants:
+            candidate = variant.lower().strip()
+            if candidate and candidate in haystack:
+                return True
+        return False
+
+    def _normalize_token(self, token: str) -> str:
+        lowered = token.lower()
+        lowered = lowered.replace("–", "-").replace("—", "-")
+        cleaned = re.sub(r"[^a-z0-9]", "", lowered)
+        return cleaned
+
     def _text_vector(self, text: str) -> Counter[str]:
-        tokens = [token.lower().strip(".,:;!?()[]{}\"'") for token in text.split()]
+        raw_tokens = re.split(r"\s+", text)
+        tokens = [self._normalize_token(token) for token in raw_tokens]
         filtered = [token for token in tokens if len(token) > 2]
         return Counter(filtered)
 

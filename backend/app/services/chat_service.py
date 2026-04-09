@@ -71,7 +71,7 @@ class ChatService:
         self.db.add(user_message)
         await self.db.flush()
 
-        chunks = self.rag_service.retrieve(classroom_id=classroom_id, question=question, k=5)
+        chunks = self.rag_service.retrieve(classroom_id=classroom_id, question=question, k=8)
         if not chunks:
             answer = "I could not find relevant content in the uploaded course material for this classroom."
             assistant = ChatMessage(conversation_id=conversation.id, role="assistant", content=answer)

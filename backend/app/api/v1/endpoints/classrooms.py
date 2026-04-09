@@ -14,7 +14,7 @@ from app.models.chat import ChatMessage
 from app.models.material import MaterialType
 from app.models.quiz import Quiz
 from app.models.user import User, UserRole
-from app.schemas.chat import ChatMessageRead, CitationRead, ClassroomQuestionRequest
+from app.schemas.chat import ChatMessageRead, CitationRead, ClassroomQuestionRequest, ClassroomVoiceChatResponse
 from app.schemas.classroom import ClassroomCreate, JoinClassroomRequest, StudentClassroomRead, TeacherClassroomRead
 from app.schemas.material import MaterialRead
 from app.schemas.quiz import (
@@ -34,6 +34,7 @@ from app.services.chat_service import ChatService
 from app.services.classroom_service import ClassroomService, classroom_qr_code_data_url
 from app.services.material_service import MaterialService
 from app.services.quiz_service import QuizService
+from app.services.voice_chat_service import VoiceChatService
 
 router = APIRouter()
 
@@ -235,6 +236,30 @@ async def ask_classroom_chat_question(
     del request
     message = await ChatService(db).ask_classroom_question(classroom_id, user, payload.question.strip())
     return _chat_message_read(message)
+
+
+@router.post("/{classroom_id}/chat/voice", response_model=ClassroomVoiceChatResponse)
+@limiter.limit("8/minute")
+async def ask_classroom_chat_voice_question(
+    request: Request,
+    classroom_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    student: User = Depends(require_role(UserRole.student)),
+) -> ClassroomVoiceChatResponse:
+    del request
+    result = await VoiceChatService(db).ask_voice_question(classroom_id=classroom_id, student=student, file=file)
+    assistant = result["assistant_message"]
+    return ClassroomVoiceChatResponse(
+        transcript_original=result["transcript_original"],
+        transcript_english=result["transcript_english"],
+        detected_language_code=result["detected_language_code"],
+        answer_text=result["answer_text"],
+        answer_language_code=result["answer_language_code"],
+        answer_audio_base64=result["answer_audio_base64"],
+        answer_audio_mime_type=result["answer_audio_mime_type"],
+        assistant_message=_chat_message_read(assistant),
+    )
 
 
 @router.post("/{classroom_id}/quizzes/generate", response_model=QuizGenerateResponse)

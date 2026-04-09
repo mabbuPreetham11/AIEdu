@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { Send } from "lucide-react";
+import { Mic, Pause, Play, Send, Square, Volume2 } from "lucide-react";
 
 import { useAuth } from "../../hooks/useAuth";
 import { chatService } from "../../services/chat.service";
@@ -16,8 +16,14 @@ export const ChatPanel = () => {
   const [question, setQuestion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [lastSentAt, setLastSentAt] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [playingAudioKey, setPlayingAudioKey] = useState<string | null>(null);
+  const [audioProgressByKey, setAudioProgressByKey] = useState<Record<string, number>>({});
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
 
   useEffect(() => {
     const loadClassrooms = async () => {
@@ -108,6 +114,90 @@ export const ChatPanel = () => {
     }
   };
 
+  const startRecording = async () => {
+    if (isRecording) return;
+    try {
+      setError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const sessionChunks: Blob[] = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          sessionChunks.push(event.data);
+        }
+      };
+      recorder.onstop = async () => {
+        try {
+          const blob = new Blob(sessionChunks, { type: recorder.mimeType || "audio/webm" });
+          if (blob.size === 0) {
+            setError("Recorded audio is empty. Please try again.");
+            return;
+          }
+          if (!selectedClassroomId) {
+            setError("Select a classroom before sending voice input.");
+            return;
+          }
+          setIsTranscribing(true);
+          const response = await chatService.askClassroomVoiceQuestion(selectedClassroomId, blob);
+
+          const voiceUserMessage: ChatMessage = {
+            id: Date.now(),
+            conversation_id: selectedClassroomId,
+            role: "user",
+            content: response.transcript_original,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            citations: [],
+          };
+          const assistantFromVoice: ChatMessage = {
+            ...response.assistant_message,
+            content: response.answer_text,
+            audio_data_url: `data:${response.answer_audio_mime_type};base64,${response.answer_audio_base64}`,
+          };
+          setMessages((current) => [...current, voiceUserMessage, assistantFromVoice]);
+        } catch (err) {
+          if (axios.isAxiosError(err)) {
+            const detail = err.response?.data?.detail;
+            setError(typeof detail === "string" ? detail : "Voice transcription failed");
+          } else {
+            setError("Voice transcription failed");
+          }
+        } finally {
+          setIsTranscribing(false);
+          stream.getTracks().forEach((track) => track.stop());
+        }
+      };
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+    } catch {
+      setError("Microphone access was denied or unavailable.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (!mediaRecorder || mediaRecorder.state !== "recording") return;
+    mediaRecorder.stop();
+    setIsRecording(false);
+  };
+
+  const toggleAudioPlayback = (key: string) => {
+    const current = audioRefs.current[key];
+    if (!current) return;
+    if (playingAudioKey === key) {
+      current.pause();
+      setPlayingAudioKey(null);
+      return;
+    }
+    Object.entries(audioRefs.current).forEach(([audioKey, element]) => {
+      if (audioKey !== key && element) {
+        element.pause();
+      }
+    });
+    void current.play();
+    setPlayingAudioKey(key);
+  };
+
   if (user?.role !== "student") {
     return (
       <div className="rounded-3xl border border-white/10 bg-white/5 p-5 text-slate-300">
@@ -148,6 +238,49 @@ export const ChatPanel = () => {
               }`}
             >
               <p>{message.content}</p>
+              {message.role === "assistant" && message.audio_data_url ? (() => {
+                const audioKey = `${message.id}-${message.created_at}`;
+                const progress = audioProgressByKey[audioKey] ?? 0;
+                const isPlaying = playingAudioKey === audioKey;
+                return (
+                  <div className="mt-3 rounded-xl border border-white/20 bg-slate-900/40 p-3">
+                    <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-300">
+                      <Volume2 className="h-3.5 w-3.5" />
+                      Voice Response
+                    </div>
+                    <audio
+                      ref={(element) => {
+                        audioRefs.current[audioKey] = element;
+                      }}
+                      className="hidden"
+                      onTimeUpdate={(event) => {
+                        const audio = event.currentTarget;
+                        const duration = audio.duration || 0;
+                        const progressValue = duration > 0 ? (audio.currentTime / duration) * 100 : 0;
+                        setAudioProgressByKey((current) => ({ ...current, [audioKey]: progressValue }));
+                      }}
+                      onEnded={() => {
+                        setPlayingAudioKey((current) => (current === audioKey ? null : current));
+                      }}
+                    >
+                      <source src={message.audio_data_url} />
+                    </audio>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleAudioPlayback(audioKey)}
+                        className="inline-flex items-center gap-2 rounded-lg border border-white/25 px-3 py-1.5 text-xs font-medium text-slate-100 hover:bg-white/10"
+                      >
+                        {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                        {isPlaying ? "Pause" : "Play"}
+                      </button>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-700/60">
+                        <div className="h-full rounded-full bg-lagoon" style={{ width: `${progress}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })() : null}
               {message.role === "assistant" && message.citations && message.citations.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {message.citations.map((citation, idx) => (
@@ -178,7 +311,22 @@ export const ChatPanel = () => {
           />
           <button
             type="button"
-            disabled={isSending || !selectedClassroomId}
+            disabled={isTranscribing}
+            onClick={() => {
+              if (isRecording) {
+                stopRecording();
+              } else {
+                void startRecording();
+              }
+            }}
+            className="inline-flex items-center gap-2 rounded-2xl border border-white/20 px-4 py-3 font-medium text-paper disabled:opacity-70"
+          >
+            {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            {isRecording ? "Stop" : isTranscribing ? "Transcribing..." : "Voice"}
+          </button>
+          <button
+            type="button"
+            disabled={isSending || !selectedClassroomId || isRecording || isTranscribing}
             onClick={() => void askQuestion()}
             className="inline-flex items-center gap-2 rounded-2xl bg-brass px-4 py-3 font-medium text-ink disabled:opacity-70"
           >

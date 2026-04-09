@@ -37,3 +37,19 @@ class ConversationRead(TimestampedSchema):
 
 class ClassroomQuestionRequest(BaseModel):
     question: str
+
+
+class SpeechTranscriptionResponse(BaseModel):
+    transcript: str
+    language_code: str | None = None
+
+
+class ClassroomVoiceChatResponse(BaseModel):
+    transcript_original: str
+    transcript_english: str
+    detected_language_code: str | None = None
+    answer_text: str
+    answer_language_code: str
+    answer_audio_base64: str
+    answer_audio_mime_type: str
+    assistant_message: ChatMessageRead

@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"
     groq_max_requests_per_minute: int = 25
+    sarvam_api_key: str | None = None
+    sarvam_stt_model: str = "saarika:v2.5"
+    sarvam_stt_mode: str | None = None
+    sarvam_stt_language_code: str = "unknown"
+    sarvam_tts_model: str = "bulbul:v3"
+    sarvam_tts_speaker: str = "shubh"
+    sarvam_tts_output_codec: str = "wav"
     default_llm_provider: Literal["openai", "groq", "local"] = "groq"
     plagiarism_provider: Literal["copyleaks", "turnitin"] = "copyleaks"
     plagiarism_api_key: str | None = None

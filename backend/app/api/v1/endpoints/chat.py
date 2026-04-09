@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,9 +8,10 @@ from app.api.v1.deps import get_current_user
 from app.db.session import get_db
 from app.models.chat import ChatConversation, ChatMessage
 from app.models.user import User
-from app.schemas.chat import ChatMessageRead, ConversationCreate, ConversationRead, MessageCreate
+from app.schemas.chat import ChatMessageRead, ConversationCreate, ConversationRead, MessageCreate, SpeechTranscriptionResponse
 from app.schemas.common import MessageResponse
 from app.services.chat_service import ChatService
+from app.services.speech_service import SpeechService
 from app.services.storage_service import StorageService
 
 router = APIRouter()
@@ -69,3 +70,19 @@ async def upload_pdf(
     await db.commit()
     return MessageResponse(detail="PDF uploaded successfully")
 
+
+@router.post("/speech-to-text", response_model=SpeechTranscriptionResponse)
+async def speech_to_text(
+    file: UploadFile = File(...),
+    model: str | None = Form(default=None),
+    mode: str | None = Form(default=None),
+    language_code: str | None = Form(default=None),
+    _: User = Depends(get_current_user),
+) -> SpeechTranscriptionResponse:
+    transcript, detected_language = await SpeechService().transcribe_with_sarvam(
+        file=file,
+        model=model,
+        mode=mode,
+        language_code=language_code,
+    )
+    return SpeechTranscriptionResponse(transcript=transcript, language_code=detected_language)

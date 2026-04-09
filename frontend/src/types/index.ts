@@ -193,6 +193,7 @@ export interface ChatMessage {
   created_at: string;
   updated_at: string;
   citations?: Citation[];
+  audio_data_url?: string | null;
 }
 
 export interface Citation {

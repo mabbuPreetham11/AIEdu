@@ -25,6 +25,7 @@ export const DashboardPage = () => {
   const [activePreviewKey, setActivePreviewKey] = useState<string | null>(null);
   const [classroomError, setClassroomError] = useState<string | null>(null);
   const [classroomMessage, setClassroomMessage] = useState<string | null>(null);
+  const [hiddenQrByClassroom, setHiddenQrByClassroom] = useState<Record<number, boolean>>({});
 
   const [materialClassroomId, setMaterialClassroomId] = useState<number | "">("");
   const [materialTitle, setMaterialTitle] = useState("");
@@ -77,6 +78,37 @@ export const DashboardPage = () => {
 
     void loadClassrooms();
   }, [user]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("teacher_hidden_qr");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, boolean>;
+      const normalized: Record<number, boolean> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        const id = Number(key);
+        if (!Number.isNaN(id) && value) {
+          normalized[id] = true;
+        }
+      }
+      setHiddenQrByClassroom(normalized);
+    } catch {
+      // ignore localStorage parse errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user?.role !== "teacher") return;
+    try {
+      const serializable: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(hiddenQrByClassroom)) {
+        serializable[String(key)] = value;
+      }
+      window.localStorage.setItem("teacher_hidden_qr", JSON.stringify(serializable));
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [hiddenQrByClassroom, user?.role]);
 
   const onCreateClassroom = async (event: FormEvent) => {
     event.preventDefault();
@@ -172,6 +204,13 @@ export const DashboardPage = () => {
     } catch {
       setClassroomError("Unable to copy invite code");
     }
+  };
+
+  const toggleQrVisibility = (classroomId: number) => {
+    setHiddenQrByClassroom((current) => ({
+      ...current,
+      [classroomId]: !current[classroomId],
+    }));
   };
 
   const onDownloadMaterial = async (classroomId: number, material: Material) => {
@@ -399,11 +438,24 @@ export const DashboardPage = () => {
                     Copy
                   </button>
                 </div>
-                <img
-                  src={classroom.qr_code_data_url}
-                  alt={`QR code for invite code ${classroom.invite_code}`}
-                  className="h-36 w-36 rounded-lg bg-white p-2"
-                />
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleQrVisibility(classroom.id)}
+                    className="rounded-lg border border-white/20 px-3 py-1 text-sm text-slate-200 hover:bg-white/10"
+                  >
+                    {hiddenQrByClassroom[classroom.id] ? "Show QR code" : "Hide QR code"}
+                  </button>
+                  {!hiddenQrByClassroom[classroom.id] ? (
+                    <img
+                      src={classroom.qr_code_data_url}
+                      alt={`QR code for invite code ${classroom.invite_code}`}
+                      className="h-36 w-36 rounded-lg bg-white p-2"
+                    />
+                  ) : (
+                    <p className="text-sm text-slate-400">QR code hidden for this classroom.</p>
+                  )}
+                </div>
                 <div className="space-y-2">
                   <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Materials</p>
                   {renderMaterialList(classroom.id)}

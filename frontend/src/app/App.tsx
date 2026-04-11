@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { Shell } from "../components/common/Shell";
 import { useAuth } from "../hooks/useAuth";
@@ -13,8 +13,12 @@ import { LoginPage } from "../pages/LoginPage";
 import { RegisterPage } from "../pages/RegisterPage";
 
 const ProtectedRoutes = () => {
+  const location = useLocation();
   const { isAuthenticated } = useAuth();
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!isAuthenticated) {
+    const suffix = location.search || "";
+    return <Navigate to={`/login${suffix}`} replace />;
+  }
   return <Shell />;
 };
 

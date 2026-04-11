@@ -1,11 +1,12 @@
 import { FormEvent, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../hooks/useAuth";
 import { login } from "../../store/slices/authSlice";
 
 export const LoginForm = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { dispatch, isLoading, error } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,7 +15,8 @@ export const LoginForm = () => {
     event.preventDefault();
     const action = await dispatch(login({ email: email.trim().toLowerCase(), password }));
     if (login.fulfilled.match(action)) {
-      navigate("/");
+      const invite = searchParams.get("invite");
+      navigate(invite ? `/?invite=${encodeURIComponent(invite)}` : "/");
     }
   };
 
@@ -46,7 +48,10 @@ export const LoginForm = () => {
         {isLoading ? "Signing in..." : "Login"}
       </button>
       <p className="text-sm text-slate-300">
-        No account yet? <Link to="/register" className="text-lagoon">Create one</Link>
+        No account yet?{" "}
+        <Link to={searchParams.get("invite") ? `/register?invite=${encodeURIComponent(searchParams.get("invite") ?? "")}` : "/register"} className="text-lagoon">
+          Create one
+        </Link>
       </p>
     </form>
   );

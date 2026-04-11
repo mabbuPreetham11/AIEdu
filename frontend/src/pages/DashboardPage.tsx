@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { Bot, BookOpen, ClipboardCheck, Copy, Download, ExternalLink, FileText, Film, Link2, Presentation, Sparkles, Upload } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { MetricCard } from "../components/common/MetricCard";
 import { NotesEditor } from "../components/notes/NotesEditor";
@@ -13,6 +14,9 @@ type MaterialsByClassroom = Record<number, Material[]>;
 
 export const DashboardPage = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const inviteJoinHandledRef = useRef<string | null>(null);
   const [classroomName, setClassroomName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [teacherClassrooms, setTeacherClassrooms] = useState<TeacherClassroom[]>([]);
@@ -80,6 +84,42 @@ export const DashboardPage = () => {
   }, [user]);
 
   useEffect(() => {
+    if (user?.role !== "student") return;
+    const invite = searchParams.get("invite")?.trim().toUpperCase();
+    if (!invite) return;
+    if (inviteJoinHandledRef.current === invite) return;
+    inviteJoinHandledRef.current = invite;
+
+    const joinFromInvite = async () => {
+      setIsJoiningClassroom(true);
+      setClassroomError(null);
+      setClassroomMessage(null);
+      try {
+        const classroom = await classroomService.joinClassroom(invite);
+        setStudentClassrooms((current) => (current.some((item) => item.id === classroom.id) ? current : [classroom, ...current]));
+        await loadMaterialsForClassroom(classroom.id);
+        setClassroomMessage(`Joined classroom ${classroom.name}`);
+      } catch (err) {
+        if (axios.isAxiosError(err)) {
+          const detail = err.response?.data?.detail;
+          if (typeof detail === "string" && detail.toLowerCase().includes("already joined")) {
+            setClassroomMessage("You are already a member of this classroom.");
+          } else {
+            setClassroomError(typeof detail === "string" ? detail : "Failed to join classroom");
+          }
+        } else {
+          setClassroomError("Failed to join classroom");
+        }
+      } finally {
+        setIsJoiningClassroom(false);
+        navigate("/", { replace: true });
+      }
+    };
+
+    void joinFromInvite();
+  }, [navigate, searchParams, user?.role]);
+
+  useEffect(() => {
     try {
       const raw = window.localStorage.getItem("teacher_hidden_qr");
       if (!raw) return;
@@ -87,8 +127,8 @@ export const DashboardPage = () => {
       const normalized: Record<number, boolean> = {};
       for (const [key, value] of Object.entries(parsed)) {
         const id = Number(key);
-        if (!Number.isNaN(id) && value) {
-          normalized[id] = true;
+        if (!Number.isNaN(id) && typeof value === "boolean") {
+          normalized[id] = value;
         }
       }
       setHiddenQrByClassroom(normalized);
@@ -209,7 +249,7 @@ export const DashboardPage = () => {
   const toggleQrVisibility = (classroomId: number) => {
     setHiddenQrByClassroom((current) => ({
       ...current,
-      [classroomId]: !current[classroomId],
+      [classroomId]: !(current[classroomId] ?? true),
     }));
   };
 
@@ -424,7 +464,9 @@ export const DashboardPage = () => {
 
           {isLoadingClassrooms ? <p className="text-slate-300">Loading classrooms...</p> : null}
           <div className="grid gap-4 md:grid-cols-2">
-            {teacherClassrooms.map((classroom) => (
+            {teacherClassrooms.map((classroom) => {
+              const isQrHidden = hiddenQrByClassroom[classroom.id] ?? true;
+              return (
               <article key={classroom.id} className="space-y-3 rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                 <h4 className="text-lg font-semibold">{classroom.name}</h4>
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
@@ -444,9 +486,9 @@ export const DashboardPage = () => {
                     onClick={() => toggleQrVisibility(classroom.id)}
                     className="rounded-lg border border-white/20 px-3 py-1 text-sm text-slate-200 hover:bg-white/10"
                   >
-                    {hiddenQrByClassroom[classroom.id] ? "Show QR code" : "Hide QR code"}
+                    {isQrHidden ? "Show QR code" : "Hide QR code"}
                   </button>
-                  {!hiddenQrByClassroom[classroom.id] ? (
+                  {!isQrHidden ? (
                     <img
                       src={classroom.qr_code_data_url}
                       alt={`QR code for invite code ${classroom.invite_code}`}
@@ -461,7 +503,8 @@ export const DashboardPage = () => {
                   {renderMaterialList(classroom.id)}
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         </section>
       ) : null}

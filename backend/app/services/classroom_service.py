@@ -2,10 +2,12 @@ import base64
 import io
 import random
 import string
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.exceptions import LMSException
 from app.models.classroom import Classroom, ClassroomMember
 from app.models.user import User
@@ -71,14 +73,16 @@ class ClassroomService:
         raise LMSException(status_code=500, detail="Unable to generate unique invite code")
 
 
-def classroom_qr_code_data_url(invite_code: str) -> str:
+def classroom_qr_code_data_url(invite_code: str, frontend_base_url: str | None = None) -> str:
     try:
         import qrcode
     except ImportError as exc:
         raise LMSException(status_code=500, detail="qrcode library is required. Install dependencies from requirements.txt") from exc
 
+    base_url = (frontend_base_url or settings.frontend_url).rstrip("/")
+    join_url = f"{base_url}/?invite={quote(invite_code)}"
     qr = qrcode.QRCode(version=1, box_size=6, border=2)
-    qr.add_data(invite_code)
+    qr.add_data(join_url)
     qr.make(fit=True)
     image = qr.make_image(fill_color="black", back_color="white")
 

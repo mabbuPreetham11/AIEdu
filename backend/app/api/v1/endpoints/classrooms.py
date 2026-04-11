@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 from fastapi.responses import FileResponse
@@ -39,6 +40,29 @@ from app.services.voice_chat_service import VoiceChatService
 router = APIRouter()
 
 
+def _frontend_base_url_from_request(request: Request) -> str:
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_host:
+        forwarded_proto = request.headers.get("x-forwarded-proto", "https").split(",")[0].strip()
+        host = forwarded_host.split(",")[0].strip()
+        if host:
+            return f"{forwarded_proto}://{host}"
+
+    origin = request.headers.get("origin")
+    if origin:
+        parsed = urlparse(origin)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+
+    referer = request.headers.get("referer")
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+
+    return settings.frontend_url
+
+
 def _chat_message_read(message: ChatMessage) -> ChatMessageRead:
     return ChatMessageRead(
         id=message.id,
@@ -73,11 +97,13 @@ def _quiz_with_attempt_read(quiz: Quiz, user: User) -> QuizWithAttemptRead:
 
 @router.post("/", response_model=TeacherClassroomRead, status_code=status.HTTP_201_CREATED)
 async def create_classroom(
+    request: Request,
     payload: ClassroomCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
     teacher: Annotated[User, Depends(require_role(UserRole.teacher))],
 ) -> TeacherClassroomRead:
     classroom = await ClassroomService(db).create_classroom(teacher, payload.name)
+    frontend_base_url = _frontend_base_url_from_request(request)
     return TeacherClassroomRead(
         id=classroom.id,
         name=classroom.name,
@@ -85,16 +111,18 @@ async def create_classroom(
         invite_code=classroom.invite_code,
         created_at=classroom.created_at,
         updated_at=classroom.updated_at,
-        qr_code_data_url=classroom_qr_code_data_url(classroom.invite_code),
+        qr_code_data_url=classroom_qr_code_data_url(classroom.invite_code, frontend_base_url),
     )
 
 
 @router.get("/teacher", response_model=list[TeacherClassroomRead])
 async def list_teacher_classrooms(
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     teacher: Annotated[User, Depends(require_role(UserRole.teacher))],
 ) -> list[TeacherClassroomRead]:
     classrooms = await ClassroomService(db).list_teacher_classrooms(teacher)
+    frontend_base_url = _frontend_base_url_from_request(request)
     return [
         TeacherClassroomRead(
             id=classroom.id,
@@ -103,7 +131,7 @@ async def list_teacher_classrooms(
             invite_code=classroom.invite_code,
             created_at=classroom.created_at,
             updated_at=classroom.updated_at,
-            qr_code_data_url=classroom_qr_code_data_url(classroom.invite_code),
+            qr_code_data_url=classroom_qr_code_data_url(classroom.invite_code, frontend_base_url),
         )
         for classroom in classrooms
     ]

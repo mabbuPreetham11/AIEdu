@@ -33,7 +33,13 @@ class AuthService:
 
     async def login(self, payload: LoginRequest) -> tuple[User, str, str]:
         user = await self.db.scalar(select(User).where(User.email == payload.email.lower()))
-        if not user or not verify_password(payload.password, user.password_hash):
+        if not user:
+            raise LMSException(status_code=401, detail="Invalid credentials")
+        try:
+            password_ok = verify_password(payload.password, user.password_hash)
+        except Exception:
+            password_ok = False
+        if not password_ok:
             raise LMSException(status_code=401, detail="Invalid credentials")
         if not user.is_active:
             raise LMSException(status_code=403, detail="User is inactive")
@@ -49,4 +55,3 @@ class AuthService:
 
     def verify_reset_token(self, token: str) -> str:
         return self.serializer.loads(token, salt="reset-password", max_age=3600)
-

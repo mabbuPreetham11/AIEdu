@@ -1,11 +1,12 @@
 import { FormEvent, useState } from "react";
 import axios from "axios";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { authService } from "../../services/auth.service";
 
 export const RegisterForm = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -25,7 +26,8 @@ export const RegisterForm = () => {
         ...form,
         email: form.email.trim(),
       });
-      navigate("/login");
+      const invite = searchParams.get("invite");
+      navigate(invite ? `/login?invite=${encodeURIComponent(invite)}` : "/login");
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const detail = err.response?.data?.detail;
@@ -94,7 +96,10 @@ export const RegisterForm = () => {
         {isSubmitting ? "Creating account..." : "Register"}
       </button>
       <p className="text-sm text-slate-300">
-        Already have an account? <Link to="/login" className="text-lagoon">Go to login</Link>
+        Already have an account?{" "}
+        <Link to={searchParams.get("invite") ? `/login?invite=${encodeURIComponent(searchParams.get("invite") ?? "")}` : "/login"} className="text-lagoon">
+          Go to login
+        </Link>
       </p>
     </form>
   );
